@@ -181,8 +181,7 @@ static const crypt_size _crypt_sizes[] = {
     _SZ_STRINGIFY_T(salsa20_state),
 #endif
 #ifdef LTC_SOSEMANUK
-    _SZ_STRINGIFY_T(sosemanuk_key_context),
-    _SZ_STRINGIFY_T(sosemanuk_run_context),
+    _SZ_STRINGIFY_T(sosemanuk_state),
 #endif
 #ifdef LTC_RC4_STREAM
     _SZ_STRINGIFY_T(rc4_state),

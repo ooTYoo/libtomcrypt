@@ -34,16 +34,12 @@
 
 #ifdef LTC_SOSEMANUK
 
-#undef SOSEMANUK_VECTOR
-#undef SOSEMANUK_SPEED
-
 /* ======================================================================== */
 
 /*
  * We want (and sometimes need) to perform explicit truncations to 32 bits.
  */
-#define ONE32    ((ulong32)0xFFFFFFFF)
-#define T32(x)   ((x) & ONE32)
+#define T32(x)   ((x) & (ulong32)0xFFFFFFFF)
 
 /*
  * Some of our functions will be tagged as "inline" to help the compiler
@@ -51,63 +47,6 @@
  * enough to understand it; C99 compilers, and pre-C99 versions of gcc,
  * understand enough "inline" for our purposes.
  */
-#if (!defined BROKEN_C99 && defined __STDC__ && __STDC_VERSION__ >= 199901L) \
-    || defined __GNUC__
-#define INLINE inline
-#else
-#define INLINE
-#endif
-
-/*
- * 32-bit data decoding, little endian.
- */
-static INLINE ulong32 decode32le(unsigned char *data)
-{
-#ifdef __i386
-    /*
-     * On i386, we prefer accessing data directly. Unaligned accesses
-     * imply only a one-cycle penalty; even with that penalty, this
-     * method is quite faster than the generic one. Note that i486
-     * and later may be set in a mode where unaligned access trigger
-     * exceptions; but such a mode is not compatible with usual ABI
-     * (which require only 4-byte alignment for "double" and "long
-     * double", hence operating systems do not set that "alignment
-     * check" flag.
-     *
-     * If this optimized access proves to be a problem, replace the
-     * test above by "#if 0".
-     */
-    return *(ulong32 *)data;
-#else
-    return (ulong32)data[0]
-        | ((ulong32)data[1] << 8)
-        | ((ulong32)data[2] << 16)
-        | ((ulong32)data[3] << 24);
-#endif
-}
-
-/*
- * 32-bit data encoding, little-endian.
- */
-static INLINE void encode32le(unsigned char *dst, ulong32 val)
-{
-#ifdef __i386__
-    /*
-     * Optimized version for i386. See comments in decode32le().
-     */
-    *(ulong32 *)dst = val;
-#else
-    dst[0] =  val        & 0xFF;
-    dst[1] = (val >>  8) & 0xFF;
-    dst[2] = (val >> 16) & 0xFF;
-    dst[3] = (val >> 24) & 0xFF;
-#endif
-}
-
-/*
- * Left-rotation by n bits (0 < n < 32).
- */
-#define ROTL(x, n)    (T32(((x) << (n)) | T32((x) >> (32 - (n)))))
 
 /* ======================================================================== */
 
@@ -240,16 +179,16 @@ static INLINE void encode32le(unsigned char *dst, ulong32 val)
  * The Serpent linear transform.
  */
 #define SERPENT_LT(x0, x1, x2, x3)  do { \
-        x0 = ROTL(x0, 13); \
-        x2 = ROTL(x2, 3); \
+        x0 = ROLc(x0, 13); \
+        x2 = ROLc(x2, 3); \
         x1 = x1 ^ x0 ^ x2; \
         x3 = x3 ^ x2 ^ T32(x0 << 3); \
-        x1 = ROTL(x1, 1); \
-        x3 = ROTL(x3, 7); \
+        x1 = ROLc(x1, 1); \
+        x3 = ROLc(x3, 7); \
         x0 = x0 ^ x1 ^ x3; \
         x2 = x2 ^ x3 ^ T32(x1 << 7); \
-        x0 = ROTL(x0, 5); \
-        x2 = ROTL(x2, 22); \
+        x0 = ROLc(x0, 5); \
+        x2 = ROLc(x2, 22); \
     } while (0)
 
 /* ======================================================================== */
@@ -262,7 +201,7 @@ static INLINE void encode32le(unsigned char *dst, ulong32 val)
  * @param key_len  Length of key
  * @return CRYPT_OK on success
  */
-int sosemanuk_schedule(sosemanuk_key_context *kc, unsigned char *key, size_t key_len)
+int sosemanuk_setup(sosemanuk_state *ss, unsigned char *key, unsigned long key_len)
 {
     /*
      * This key schedule is actually a truncated Serpent key schedule.
@@ -277,10 +216,10 @@ int sosemanuk_schedule(sosemanuk_key_context *kc, unsigned char *key, size_t key
         r2 = w ## o2; \
         r3 = w ## o3; \
         S(r0, r1, r2, r3, r4); \
-        kc->sk[i ++] = r ## d0; \
-        kc->sk[i ++] = r ## d1; \
-        kc->sk[i ++] = r ## d2; \
-        kc->sk[i ++] = r ## d3; \
+        ss->kc[i ++] = r ## d0; \
+        ss->kc[i ++] = r ## d1; \
+        ss->kc[i ++] = r ## d2; \
+        ss->kc[i ++] = r ## d3; \
     } while (0)
 
 #define SKS0    SKS(S0, 4, 5, 6, 7, 1, 4, 2, 0)
@@ -295,7 +234,7 @@ int sosemanuk_schedule(sosemanuk_key_context *kc, unsigned char *key, size_t key
 #define WUP(wi, wi5, wi3, wi1, cc)   do { \
         ulong32 tt = (wi) ^ (wi5) ^ (wi3) \
             ^ (wi1) ^ (0x9E3779B9 ^ (ulong32)(cc)); \
-        (wi) = ROTL(tt, 11); \
+        (wi) = ROLc(tt, 11); \
     } while (0)
 
 #define WUP0(cc)   do { \
@@ -313,7 +252,7 @@ int sosemanuk_schedule(sosemanuk_key_context *kc, unsigned char *key, size_t key
     } while (0)
 
     unsigned char wbuf[32];
-    register ulong32 w0, w1, w2, w3, w4, w5, w6, w7;
+    ulong32 w0, w1, w2, w3, w4, w5, w6, w7;
     int i = 0;
 
     /*
@@ -332,33 +271,14 @@ int sosemanuk_schedule(sosemanuk_key_context *kc, unsigned char *key, size_t key
             XMEMSET(wbuf + key_len + 1, 0, 31 - key_len);
     }
 
-#ifdef SOSEMANUK_VECTOR
-    {
-        size_t u;
-
-        printf("key = ");
-        for (u = 0; u < key_len; u ++)
-            printf("%02X", key[u]);
-        printf("\n");
-    }
-#endif
-
-    w0 = decode32le(wbuf);
-    w1 = decode32le(wbuf + 4);
-    w2 = decode32le(wbuf + 8);
-    w3 = decode32le(wbuf + 12);
-    w4 = decode32le(wbuf + 16);
-    w5 = decode32le(wbuf + 20);
-    w6 = decode32le(wbuf + 24);
-    w7 = decode32le(wbuf + 28);
-
-#ifdef SOSEMANUK_VECTOR
-    printf("  -> %08lX %08lX %08lX %08lX %08lX %08lX %08lX %08lX\n",
-        (unsigned long)w7, (unsigned long)w6,
-        (unsigned long)w5, (unsigned long)w4,
-        (unsigned long)w3, (unsigned long)w2,
-        (unsigned long)w1, (unsigned long)w0);
-#endif
+    LOAD32L(w0, wbuf);
+    LOAD32L(w1, wbuf + 4);
+    LOAD32L(w2, wbuf + 8);
+    LOAD32L(w3, wbuf + 12);
+    LOAD32L(w4, wbuf + 16);
+    LOAD32L(w5, wbuf + 20);
+    LOAD32L(w6, wbuf + 24);
+    LOAD32L(w7, wbuf + 28);
 
     WUP0(0);   SKS3;
     WUP1(4);   SKS2;
@@ -385,21 +305,6 @@ int sosemanuk_schedule(sosemanuk_key_context *kc, unsigned char *key, size_t key
     WUP0(88);  SKS5;
     WUP1(92);  SKS4;
     WUP0(96);  SKS3;
-
-#ifdef SOSEMANUK_VECTOR
-    {
-        unsigned u;
-
-        for (u = 0; u < 100; u += 4) {
-            printf("Serpent24 subkey %2u:"
-                " %08lX %08lX %08lX %08lX\n", u / 4,
-                (unsigned long)kc->sk[u + 3],
-                (unsigned long)kc->sk[u + 2],
-                (unsigned long)kc->sk[u + 1],
-                (unsigned long)kc->sk[u + 0]);
-        }
-    }
-#endif
 
 #undef SKS
 #undef SKS0
@@ -428,19 +333,17 @@ int sosemanuk_schedule(sosemanuk_key_context *kc, unsigned char *key, size_t key
  * @param iv_len   Length of iv
  * @return CRYPT_OK on success
  */
-int sosemanuk_init(sosemanuk_run_context *rc,
-                   sosemanuk_key_context *kc,
-                   unsigned char *iv, size_t iv_len)
+int sosemanuk_setiv(sosemanuk_state *ss, unsigned char *iv, unsigned long iv_len)
 {
 
     /*
      * The Serpent key addition step.
      */
 #define KA(zc, x0, x1, x2, x3)  do { \
-        x0 ^= kc->sk[(zc)]; \
-        x1 ^= kc->sk[(zc) + 1]; \
-        x2 ^= kc->sk[(zc) + 2]; \
-        x3 ^= kc->sk[(zc) + 3]; \
+        x0 ^= ss->kc[(zc)]; \
+        x1 ^= ss->kc[(zc) + 1]; \
+        x2 ^= ss->kc[(zc) + 2]; \
+        x3 ^= ss->kc[(zc) + 3]; \
     } while (0)
 
     /*
@@ -467,7 +370,7 @@ int sosemanuk_init(sosemanuk_run_context *rc,
         KA(zc + 4, r ## o0, r ## o1, r ## o2, r ## o3); \
     } while (0)
 
-    register ulong32 r0, r1, r2, r3, r4;
+    ulong32 r0, r1, r2, r3, r4;
     unsigned char ivtmp[16];
 
     if (iv_len >= sizeof ivtmp) {
@@ -478,30 +381,13 @@ int sosemanuk_init(sosemanuk_run_context *rc,
         XMEMSET(ivtmp + iv_len, 0, (sizeof ivtmp) - iv_len);
     }
 
-#ifdef SOSEMANUK_VECTOR
-    {
-        size_t u;
-
-        printf("IV = ");
-        for (u = 0; u < 16; u ++)
-            printf("%02X", ivtmp[u]);
-        printf("\n");
-    }
-#endif
-
     /*
      * Decode IV into four 32-bit words (little-endian).
      */
-    r0 = decode32le(ivtmp);
-    r1 = decode32le(ivtmp + 4);
-    r2 = decode32le(ivtmp + 8);
-    r3 = decode32le(ivtmp + 12);
-
-#ifdef SOSEMANUK_VECTOR
-    printf("  -> %08lX %08lX %08lX %08lX\n",
-        (unsigned long)r3, (unsigned long)r2,
-        (unsigned long)r1, (unsigned long)r0);
-#endif
+    LOAD32L(r0, ivtmp);
+    LOAD32L(r1, ivtmp + 4);
+    LOAD32L(r2, ivtmp + 8);
+    LOAD32L(r3, ivtmp + 12);
 
     /*
      * Encrypt IV with Serpent24. Some values are extracted from the
@@ -519,10 +405,10 @@ int sosemanuk_init(sosemanuk_run_context *rc,
     FSS(36, S1, 1, 3, 2, 4, 0, 2, 1, 4, 3);
     FSS(40, S2, 2, 1, 4, 3, 0, 4, 3, 1, 0);
     FSS(44, S3, 4, 3, 1, 0, 2, 3, 1, 0, 2);
-    rc->s09 = r3;
-    rc->s08 = r1;
-    rc->s07 = r0;
-    rc->s06 = r2;
+    ss->s09 = r3;
+    ss->s08 = r1;
+    ss->s07 = r0;
+    ss->s06 = r2;
 
     FSS(48, S4, 3, 1, 0, 2, 4, 1, 4, 3, 2);
     FSS(52, S5, 1, 4, 3, 2, 0, 4, 2, 1, 3);
@@ -530,10 +416,10 @@ int sosemanuk_init(sosemanuk_run_context *rc,
     FSS(60, S7, 4, 2, 0, 1, 3, 3, 1, 2, 4);
     FSS(64, S0, 3, 1, 2, 4, 0, 1, 0, 2, 3);
     FSS(68, S1, 1, 0, 2, 3, 4, 2, 1, 3, 0);
-    rc->r1  = r2;
-    rc->s04 = r1;
-    rc->r2  = r3;
-    rc->s05 = r0;
+    ss->r1  = r2;
+    ss->s04 = r1;
+    ss->r2  = r3;
+    ss->s05 = r0;
 
     FSS(72, S2, 2, 1, 3, 0, 4, 3, 0, 1, 4);
     FSS(76, S3, 3, 0, 1, 4, 2, 0, 1, 4, 2);
@@ -541,28 +427,12 @@ int sosemanuk_init(sosemanuk_run_context *rc,
     FSS(84, S5, 1, 3, 0, 2, 4, 3, 2, 1, 0);
     FSS(88, S6, 3, 2, 1, 0, 4, 3, 2, 4, 1);
     FSF(92, S7, 3, 2, 4, 1, 0, 0, 1, 2, 3);
-    rc->s03 = r0;
-    rc->s02 = r1;
-    rc->s01 = r2;
-    rc->s00 = r3;
+    ss->s03 = r0;
+    ss->s02 = r1;
+    ss->s01 = r2;
+    ss->s00 = r3;
 
-#ifdef SOSEMANUK_VECTOR
-    printf("Initial LFSR state:\n");
-    printf("      s1  = %08lX\n", (unsigned long)rc->s00);
-    printf("      s2  = %08lX\n", (unsigned long)rc->s01);
-    printf("      s3  = %08lX\n", (unsigned long)rc->s02);
-    printf("      s4  = %08lX\n", (unsigned long)rc->s03);
-    printf("      s5  = %08lX\n", (unsigned long)rc->s04);
-    printf("      s6  = %08lX\n", (unsigned long)rc->s05);
-    printf("      s7  = %08lX\n", (unsigned long)rc->s06);
-    printf("      s8  = %08lX\n", (unsigned long)rc->s07);
-    printf("      s9  = %08lX\n", (unsigned long)rc->s08);
-    printf("      s10 = %08lX\n", (unsigned long)rc->s09);
-    printf("Initial FSM state:  r1 = %08lX   r2 = %08lX\n",
-        (unsigned long)rc->r1, (unsigned long)rc->r2);
-#endif
-
-    rc->ptr = sizeof rc->buf;
+    ss->ptr = sizeof ss->buf;
 
 #undef KA
 #undef FSS
@@ -715,13 +585,8 @@ static ulong32 mul_ia[] = {
 /*
  * Compute the next block of bits of output stream. This is equivalent
  * to one full rotation of the shift register.
- *
- * If SOSEMANUK_SPEED is defined, this function takes an extra parameter
- * "counter". The function then returns the sum of all produced
- * 32-bit words, in an "ulong32". That sum prevents the compiler from
- * optimizing out part of the computation.
  */
-static INLINE void sosemanuk_internal(sosemanuk_run_context *rc)
+static LTC_INLINE void sosemanuk_internal(sosemanuk_state *ss)
 {
     /*
      * MUL_A(x) computes alpha * x (in F_{2^32}).
@@ -753,8 +618,7 @@ static INLINE void sosemanuk_internal(sosemanuk_run_context *rc)
         or1 = r1; \
         r1 = T32(r2 + tt); \
         tt = T32(or1 * 0x54655307); \
-        r2 = ROTL(tt, 7); \
-        PFSM; \
+        r2 = ROLc(tt, 7); \
     } while (0)
 
     /*
@@ -764,8 +628,6 @@ static INLINE void sosemanuk_internal(sosemanuk_run_context *rc)
 #define LRU(x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, dd)   do { \
         dd = s ## x0; \
         s ## x0 = MUL_A(s ## x0) ^ MUL_G(s ## x3) ^ s ## x9; \
-        PLFSR(dd, s ## x1, s ## x2, s ## x3, s ## x4, s ## x5, \
-            s ## x6, s ## x7, s ## x8, s ## x9, s ## x0); \
     } while (0)
 
     /*
@@ -774,7 +636,6 @@ static INLINE void sosemanuk_internal(sosemanuk_run_context *rc)
      */
 #define CC1(x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, ee)   do { \
         ee = T32(s ## x9 + r1) ^ r2; \
-        PCCVAL(ee); \
     } while (0)
 
     /*
@@ -794,42 +655,26 @@ static INLINE void sosemanuk_internal(sosemanuk_run_context *rc)
      * the destination buffer, at the provided offset. The "x*"
      * arguments encode the output permutation of the "S" macro.
      */
-#define OUTWORD_BASE   (rc->buf)
-
 #define SRD(S, x0, x1, x2, x3, ooff)   do { \
-        PSPIN(u0, u1, u2, u3); \
         S(u0, u1, u2, u3, u4); \
-        PSPOUT(u ## x0, u ## x1, u ## x2, u ## x3); \
-        encode32le(OUTWORD_BASE + ooff, u ## x0 ^ v0); \
-        encode32le(OUTWORD_BASE + ooff + 4, u ## x1 ^ v1); \
-        encode32le(OUTWORD_BASE + ooff + 8, u ## x2 ^ v2); \
-        encode32le(OUTWORD_BASE + ooff + 12, u ## x3 ^ v3); \
-        POUT(OUTWORD_BASE + ooff); \
+        STORE32L(u ## x0 ^ v0, ss->buf + ooff); \
+        STORE32L(u ## x1 ^ v1, ss->buf + ooff +  4); \
+        STORE32L(u ## x2 ^ v2, ss->buf + ooff +  8); \
+        STORE32L(u ## x3 ^ v3, ss->buf + ooff + 12); \
     } while (0)
 
-
-    /*
-     * Audit code; used for detailed test vectors.
-     */
-#define PFSM                      (void)0
-#define PLFSR(dd, x1, x2, x3, x4, x5, x6, x7, x8, x9, x0)   (void)0
-#define PCCVAL(ee)                (void)0
-#define PSPIN(x0, x1, x2, x3)     (void)0
-#define PSPOUT(x0, x1, x2, x3)    (void)0
-#define POUT(buf)                 (void)0
-
-    ulong32 s00 = rc->s00;
-    ulong32 s01 = rc->s01;
-    ulong32 s02 = rc->s02;
-    ulong32 s03 = rc->s03;
-    ulong32 s04 = rc->s04;
-    ulong32 s05 = rc->s05;
-    ulong32 s06 = rc->s06;
-    ulong32 s07 = rc->s07;
-    ulong32 s08 = rc->s08;
-    ulong32 s09 = rc->s09;
-    ulong32 r1 = rc->r1;
-    ulong32 r2 = rc->r2;
+    ulong32 s00 = ss->s00;
+    ulong32 s01 = ss->s01;
+    ulong32 s02 = ss->s02;
+    ulong32 s03 = ss->s03;
+    ulong32 s04 = ss->s04;
+    ulong32 s05 = ss->s05;
+    ulong32 s06 = ss->s06;
+    ulong32 s07 = ss->s07;
+    ulong32 s08 = ss->s08;
+    ulong32 s09 = ss->s09;
+    ulong32 r1 = ss->r1;
+    ulong32 r2 = ss->r2;
     ulong32 u0, u1, u2, u3, u4;
     ulong32 v0, v1, v2, v3;
 
@@ -859,18 +704,18 @@ static INLINE void sosemanuk_internal(sosemanuk_run_context *rc)
     STEP(09, 00, 01, 02, 03, 04, 05, 06, 07, 08, v3, u3);
     SRD(S2, 2, 3, 1, 4, 64);
 
-    rc->s00 = s00;
-    rc->s01 = s01;
-    rc->s02 = s02;
-    rc->s03 = s03;
-    rc->s04 = s04;
-    rc->s05 = s05;
-    rc->s06 = s06;
-    rc->s07 = s07;
-    rc->s08 = s08;
-    rc->s09 = s09;
-    rc->r1 = r1;
-    rc->r2 = r2;
+    ss->s00 = s00;
+    ss->s01 = s01;
+    ss->s02 = s02;
+    ss->s03 = s03;
+    ss->s04 = s04;
+    ss->s05 = s05;
+    ss->s06 = s06;
+    ss->s07 = s07;
+    ss->s08 = s08;
+    ss->s09 = s09;
+    ss->r1 = r1;
+    ss->r2 = r2;
 }
 
 /*
@@ -879,8 +724,8 @@ static INLINE void sosemanuk_internal(sosemanuk_run_context *rc)
  * or in2[] is not allowed. Total overlap (out == in1 and/or out == in2)
  * is allowed.
  */
-static INLINE void xorbuf(const unsigned char *in1, const unsigned char *in2,
-    unsigned char *out, size_t data_len)
+static LTC_INLINE void xorbuf(const unsigned char *in1, const unsigned char *in2,
+    unsigned char *out, unsigned long data_len)
 {
     while (data_len -- > 0)
         *out ++ = *in1 ++ ^ *in2 ++;
@@ -898,30 +743,30 @@ static INLINE void xorbuf(const unsigned char *in1, const unsigned char *in2,
  * @param data_len Length of data
  * @return CRYPT_OK on success
  */
-int sosemanuk_crypt(sosemanuk_run_context *rc,
-                        const unsigned char *in, size_t data_len, unsigned char *out)
+int sosemanuk_crypt(sosemanuk_state *ss,
+                        const unsigned char *in, unsigned long data_len, unsigned char *out)
 {
-    if (rc->ptr < (sizeof rc->buf)) {
-        size_t rlen = (sizeof rc->buf) - rc->ptr;
+    if (ss->ptr < (sizeof ss->buf)) {
+        unsigned long rlen = (sizeof ss->buf) - ss->ptr;
 
         if (rlen > data_len)
             rlen = data_len;
-        xorbuf(rc->buf + rc->ptr, in, out, rlen);
+        xorbuf(ss->buf + ss->ptr, in, out, rlen);
         in += rlen;
         out += rlen;
         data_len -= rlen;
-        rc->ptr += rlen;
+        ss->ptr += rlen;
     }
     while (data_len > 0) {
-        sosemanuk_internal(rc);
-        if (data_len >= sizeof rc->buf) {
-            xorbuf(rc->buf, in, out, sizeof rc->buf);
-            in += sizeof rc->buf;
-            out += sizeof rc->buf;
-            data_len -= sizeof rc->buf;
+        sosemanuk_internal(ss);
+        if (data_len >= sizeof ss->buf) {
+            xorbuf(ss->buf, in, out, sizeof ss->buf);
+            in += sizeof ss->buf;
+            out += sizeof ss->buf;
+            data_len -= sizeof ss->buf;
         } else {
-            xorbuf(rc->buf, in, out, data_len);
-            rc->ptr = data_len;
+            xorbuf(ss->buf, in, out, data_len);
+            ss->ptr = data_len;
             data_len = 0;
         }
     }
@@ -937,27 +782,27 @@ int sosemanuk_crypt(sosemanuk_run_context *rc,
  * @param out_len  Length of output
  * @return CRYPT_OK on success
  */
-int sosemanuk_keystream(sosemanuk_run_context *rc, unsigned char *out, size_t out_len)
+int sosemanuk_keystream(sosemanuk_state *ss, unsigned char *out, unsigned long out_len)
 {
-    if (rc->ptr < (sizeof rc->buf)) {
-        size_t rlen = (sizeof rc->buf) - rc->ptr;
+    if (ss->ptr < (sizeof ss->buf)) {
+        unsigned long rlen = (sizeof ss->buf) - ss->ptr;
 
         if (rlen > out_len)
             rlen = out_len;
-        XMEMCPY(out, rc->buf + rc->ptr, rlen);
+        XMEMCPY(out, ss->buf + ss->ptr, rlen);
         out += rlen;
         out_len -= rlen;
-        rc->ptr += rlen;
+        ss->ptr += rlen;
     }
     while (out_len > 0) {
-        sosemanuk_internal(rc);
-        if (out_len >= sizeof rc->buf) {
-            XMEMCPY(out, rc->buf, sizeof rc->buf);
-            out += sizeof rc->buf;
-            out_len -= sizeof rc->buf;
+        sosemanuk_internal(ss);
+        if (out_len >= sizeof ss->buf) {
+            XMEMCPY(out, ss->buf, sizeof ss->buf);
+            out += sizeof ss->buf;
+            out_len -= sizeof ss->buf;
         } else {
-            XMEMCPY(out, rc->buf, out_len);
-            rc->ptr = out_len;
+            XMEMCPY(out, ss->buf, out_len);
+            ss->ptr = out_len;
             out_len = 0;
         }
     }
@@ -970,17 +815,13 @@ int sosemanuk_keystream(sosemanuk_run_context *rc, unsigned char *out, size_t ou
  * @param kc      The Sosemanuk key context
  * @return CRYPT_OK on success
  */
-int sosemanuk_done(sosemanuk_key_context *kc, sosemanuk_run_context *rc)
+int sosemanuk_done(sosemanuk_state *ss)
 {
-   LTC_ARGCHK(kc != NULL);
-   LTC_ARGCHK(rc != NULL);
-   XMEMSET(kc, 0, sizeof(sosemanuk_key_context));
-   XMEMSET(rc, 0, sizeof(sosemanuk_run_context));
+   LTC_ARGCHK(ss != NULL);
+   XMEMSET(ss, 0, sizeof(sosemanuk_state));
    return CRYPT_OK;
 }
 
-
-#undef INLINE
 
 #endif
 
