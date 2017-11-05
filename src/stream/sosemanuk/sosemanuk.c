@@ -196,7 +196,7 @@
 /*
  * Key schedule: initialize the key context structure with the provided
  * secret key. The secret key is an array of 1 to 32 bytes.
- * @param kc       The Sosemanuk key context
+ * @param ss       The Sosemanuk state
  * @param key      Key
  * @param keylen   Length of key
  * @return CRYPT_OK on success
@@ -330,8 +330,7 @@ int sosemanuk_setup(sosemanuk_state *ss, unsigned char *key, unsigned long keyle
  * Cipher initialization: the cipher internal state is initialized, using
  * the provided key context and IV. The IV length is up to 16 bytes. If
  * "ivlen" is 0 (no IV), then the "iv" parameter can be NULL.
- * @param rc       The Sosemanuk run context
- * @param kc       The Sosemanuk key context
+ * @param ss       The Sosemanuk state
  * @param iv       Initialization vector
  * @param ivlen    Length of iv
  * @return CRYPT_OK on success
@@ -738,7 +737,7 @@ static LTC_INLINE void _xorbuf(const unsigned char *in1, const unsigned char *in
  * buffer, combined by XOR with the stream, and the result is written
  * in the "out" buffer. "in" and "out" must be either equal, or
  * reference distinct buffers (no partial overlap is allowed).
- * @param rc       The Sosemanuk run context
+ * @param ss       The Sosemanuk state
  * @param in       Data in
  * @param out      Data out
  * @param datalen  Length of data
@@ -783,7 +782,7 @@ int sosemanuk_crypt(sosemanuk_state *ss,
 /*
  * Cipher operation, as a PRNG: the provided output buffer is filled with
  * pseudo-random bytes as output from the stream cipher.
- * @param rc       The Sosemanuk run context
+ * @param ss       The Sosemanuk state
  * @param out      Data out
  * @param outlen   Length of output
  * @return CRYPT_OK on success
