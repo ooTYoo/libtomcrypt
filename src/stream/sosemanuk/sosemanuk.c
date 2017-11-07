@@ -259,6 +259,14 @@ int sosemanuk_setup(sosemanuk_state *ss, unsigned char *key, unsigned long keyle
    LTC_ARGCHK(key != NULL);
 
     /*
+     * Initialize the pointer to 666 as a flag that can be checked
+     * by sosemanuk_crypt() as an indication sosemanuk_setiv() was
+     * not called.  (sosemanuk_setiv() will set the pointer to a
+     * more reasonable value.)
+     */
+    ss->ptr = 666;
+
+    /*
      * The key is copied into the wbuf[] buffer and padded to 256 bits
      * as described in the Serpent specification.
      */
@@ -376,10 +384,10 @@ int sosemanuk_setiv(sosemanuk_state *ss, unsigned char *iv, unsigned long ivlen)
     unsigned char ivtmp[16] = {0};
 
     LTC_ARGCHK(ss != NULL);
-    LTC_ARGCHK(iv != NULL);
     LTC_ARGCHK(ivlen >= 0 && ivlen <= 16);
+    LTC_ARGCHK((iv != NULL && ivlen > 0) || (iv == NULL && ivlen == 0));
 
-    XMEMCPY(ivtmp, iv, ivlen);
+    if (ivlen > 0) XMEMCPY(ivtmp, iv, ivlen);
 
     /*
      * Decode IV into four 32-bit words (little-endian).
@@ -746,10 +754,10 @@ static LTC_INLINE void _xorbuf(const unsigned char *in1, const unsigned char *in
 int sosemanuk_crypt(sosemanuk_state *ss,
                         const unsigned char *in, unsigned long datalen, unsigned char *out)
 {
-
     LTC_ARGCHK(ss  != NULL);
     LTC_ARGCHK(in  != NULL);
     LTC_ARGCHK(out != NULL);
+    LTC_ARGCHK(ss->ptr != 666); /* check whether sosemanuk_setiv was called */
 
     if (ss->ptr < (sizeof(ss->buf))) {
         unsigned long rlen = (sizeof(ss->buf)) - ss->ptr;
